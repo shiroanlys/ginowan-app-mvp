@@ -31,13 +31,7 @@
         .card:hover { transform: scale(1.02); }
         .card img { width: 100%; height: 100%; object-fit: cover; }
 
-        /* 正解して消える時のアニメーション用 */
-        .card.removed {
-            visibility: hidden;
-            pointer-events: none;
-        }
-
-        .btn { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; font-size: 1rem; }
+        .btn { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; font-size: 1rem; transition: background-color 0.3s; }
         .btn:disabled { background: #ccc !important; }
         .btn-blue { background: var(--primary); }
         .btn-red { background: var(--danger); }
@@ -64,7 +58,7 @@
             <button id="recBtn" class="btn btn-rec">🎙 録音開始</button>
             <button id="saveBtn" class="btn btn-blue" disabled>✅ 保存</button>
         </div>
-        <p id="status">写真と声を準備してね</p>
+        <p id="status">写真と声を準備してね（iPhoneはマナーモード解除）</p>
     </section>
 
     <section>
@@ -86,12 +80,14 @@
         let audioChunks = [];
         let currentAudioBlob = null;
         let correctId = null;
-        let removedCardIds = new Set(); // 正解したカードのIDを保持
-        let allCards = []; // 現在ロードされている全カード
+        let removedCardIds = new Set();
+        let allCards = [];
+        let isGameOver = false;
+        let playBtn; // グローバル変数化
 
-        // GitHub Pagesなどでのアクセス制限
+        // アクセス制限
         const params = new URLSearchParams(window.location.search);
-        const ACCESS_KEY = "shima-karuta"; // チーム用合言葉
+        const ACCESS_KEY = "shima-karuta"; 
 
         if (params.get("view") !== ACCESS_KEY) {
             document.body.innerHTML = `
@@ -99,7 +95,7 @@
                     <h2>🛠 開発中プロトタイプ</h2>
                     <p>このページを閲覧するには専用のURLが必要です。</p>
                 </div>`;
-            throw new Error("Access Denied"); // 処理を強制停止
+            throw new Error("Access Denied");
         }
 
         const request = indexedDB.open("KarutaDB", 1);
@@ -108,10 +104,11 @@
         };
         request.onsuccess = e => {
             db = e.target.result;
+            playBtn = document.getElementById('playBtn'); // 初期化時に参照を確保
             loadAndRender(false);
         };
 
-        // 録音ロジック
+        // 録音ロジック（iOS対応版）
         const recBtn = document.getElementById('recBtn');
         recBtn.onclick = async () => {
             if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -121,13 +118,19 @@
             } else {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    // iOS Safari対応: 対応しているMIMEタイプを選択
+                    const mimeType = MediaRecorder.isTypeSupported('audio/mp4') 
+                                     ? 'audio/mp4' 
+                                     : 'audio/webm';
+                    
+                    mediaRecorder = new MediaRecorder(stream, { mimeType });
                     audioChunks = [];
                     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                     mediaRecorder.onstop = () => {
-                        currentAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        currentAudioBlob = new Blob(audioChunks, { type: mimeType });
                         document.getElementById('saveBtn').disabled = false;
-                        document.getElementById('status').textContent = "録音完了！";
+                        document.getElementById('status').textContent = "録音完了！保存してね。";
                     };
                     mediaRecorder.start();
                     recBtn.textContent = "⏹ 停止";
@@ -147,7 +150,6 @@
             transaction.oncomplete = () => location.reload();
         };
 
-        // ロードと描画
         function loadAndRender(shouldShuffle = true) {
             const store = db.transaction("cards").objectStore("cards");
             store.getAll().onsuccess = e => {
@@ -166,52 +168,73 @@
 
         function render() {
             const board = document.getElementById('gameBoard');
+            const remainSpan = document.getElementById('remainCount');
+            const gameMsg = document.getElementById('gameMsg');
+            
             board.innerHTML = "";
-            let count = 0;
+            let activeCount = 0;
 
             allCards.forEach(card => {
                 const isRemoved = removedCardIds.has(card.id);
-                if (!isRemoved) count++;
-
-                const div = document.createElement('div');
-                div.className = `card ${isRemoved ? 'removed' : ''}`;
-                const img = document.createElement('img');
-                img.src = URL.createObjectURL(card.image);
-                div.onclick = () => checkAnswer(card.id);
-                div.appendChild(img);
-                board.appendChild(div);
+                if (!isRemoved) {
+                    activeCount++;
+                    const div = document.createElement('div');
+                    div.className = 'card';
+                    const img = document.createElement('img');
+                    img.src = URL.createObjectURL(card.image);
+                    div.onclick = () => checkAnswer(card.id);
+                    div.appendChild(img);
+                    board.appendChild(div);
+                }
             });
-            document.getElementById('remainCount').textContent = count;
+
+            remainSpan.textContent = activeCount;
+
+            // 「ボタン切り替え」ロジック
+            if (allCards.length > 0 && activeCount === 0) {
+                isGameOver = true;
+                playBtn.textContent = "✨ コンプリート！もう一回あそぶ ✨";
+                playBtn.style.backgroundColor = "var(--primary)";
+                gameMsg.style.visibility = "hidden";
+            } else {
+                isGameOver = false;
+                playBtn.textContent = "🔊 読み札を再生";
+                playBtn.style.backgroundColor = "var(--success)";
+                gameMsg.style.visibility = "visible";
+            }
         }
 
-        // ゲーム進行
-        document.getElementById('playBtn').onclick = () => {
-            // 残っているカードから選ぶ
-            const activeCards = allCards.filter(c => !removedCardIds.has(c.id));
-            
-            if (activeCards.length === 0) {
-                if (allCards.length === 0) return alert("カードを作ってね");
-                if (confirm("全部取りました！リセットしてもう一回遊ぶ？")) {
-                    removedCardIds.clear();
-                    loadAndRender(true);
-                }
-                return;
-            }
+        // ゲーム進行（iOS再生対応版）
+        document.getElementById('playBtn').onclick = function() {
+            if (isGameOver) {
+                removedCardIds.clear();
+                correctId = null;
+                loadAndRender(true);
+            } else {
+                const activeCards = allCards.filter(c => !removedCardIds.has(c.id));
+                if (activeCards.length === 0) return alert("カードを作ってね");
 
-            const target = activeCards[Math.floor(Math.random() * activeCards.length)];
-            correctId = target.id;
-            new Audio(URL.createObjectURL(target.audio)).play();
-            document.getElementById('gameMsg').textContent = "さがせ〜！";
+                const target = activeCards[Math.floor(Math.random() * activeCards.length)];
+                correctId = target.id;
+                
+                // iOS Safari対策: Audioオブジェクトの明示的な生成とエラーハンドリング
+                const audio = new Audio();
+                audio.src = URL.createObjectURL(target.audio);
+                audio.play().catch(err => {
+                    console.error("Playback error:", err);
+                    alert("音が鳴らない場合はマナーモードを解除してください");
+                });
+                
+                document.getElementById('gameMsg').textContent = "さがせ〜！";
+            }
         };
 
         function checkAnswer(id) {
             if (correctId === null) return;
             if (id === correctId) {
-                alert("正解！");
                 removedCardIds.add(id);
                 correctId = null;
-                document.getElementById('gameMsg').textContent = "正解！次の札へ！";
-                render();
+                render(); 
             } else {
                 alert("ちがうよー！");
             }
