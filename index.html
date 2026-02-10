@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta name="robots" content="noindex, nofollow">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>みんなで作るカルタ プロトタイプ</title>
+    <style>
+        :root { --primary: #007bff; --success: #28a745; --danger: #dc3545; }
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f8f9fa; color: #333; }
+        section { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2 { border-left: 5px solid var(--primary); padding-left: 12px; margin-top: 0; font-size: 1.2rem; }
+        
+        .card-list { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); 
+            gap: 15px; 
+            margin-top: 15px;
+            min-height: 200px;
+        }
+        
+        .card { 
+            aspect-ratio: 3 / 4; 
+            background: #fff;
+            border: 3px solid #eee; 
+            border-radius: 8px; 
+            overflow: hidden; 
+            cursor: pointer; 
+            transition: transform 0.2s;
+        }
+        .card:hover { transform: scale(1.02); }
+        .card img { width: 100%; height: 100%; object-fit: cover; }
+
+        /* 正解して消える時のアニメーション用 */
+        .card.removed {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .btn { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; font-size: 1rem; }
+        .btn:disabled { background: #ccc !important; }
+        .btn-blue { background: var(--primary); }
+        .btn-red { background: var(--danger); }
+        .btn-green { background: var(--success); width: 100%; font-size: 1.2rem; margin-bottom: 10px; }
+        .btn-rec { background: #ff4757; }
+        
+        .recording { animation: blink 1s infinite; background: #b33939 !important; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+        
+        #status { font-size: 0.9rem; color: #666; margin-top: 10px; }
+        .game-controls { text-align: center; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+    <header style="text-align: center; margin-bottom: 20px;">
+        <h1>🎤 みんなで作るカルタ</h1>
+    </header>
+
+    <section>
+        <h2>1. カードを追加</h2>
+        <input type="file" id="imageInput" accept="image/*" capture="environment">
+        <div style="display: flex; gap: 10px; margin-top:10px;">
+            <button id="recBtn" class="btn btn-rec">🎙 録音開始</button>
+            <button id="saveBtn" class="btn btn-blue" disabled>✅ 保存</button>
+        </div>
+        <p id="status">写真と声を準備してね</p>
+    </section>
+
+    <section>
+        <h2>2. あそぶ</h2>
+        <div class="game-controls">
+            <button id="playBtn" class="btn btn-green">🔊 読み札を再生</button>
+            <p id="gameMsg">のこり：<span id="remainCount">0</span>枚</p>
+        </div>
+        <div id="gameBoard" class="card-list"></div>
+    </section>
+
+    <div style="text-align: right;">
+        <button id="clearBtn" class="btn btn-red" style="font-size: 0.7rem;">全削除</button>
+    </div>
+
+    <script>
+        let db;
+        let mediaRecorder;
+        let audioChunks = [];
+        let currentAudioBlob = null;
+        let correctId = null;
+        let removedCardIds = new Set(); // 正解したカードのIDを保持
+        let allCards = []; // 現在ロードされている全カード
+
+        // GitHub Pagesなどでのアクセス制限
+        const params = new URLSearchParams(window.location.search);
+        const ACCESS_KEY = "shima-karuta"; // チーム用合言葉
+
+        if (params.get("view") !== ACCESS_KEY) {
+            document.body.innerHTML = `
+                <div style="padding:40px; text-align:center; font-family:sans-serif;">
+                    <h2>🛠 開発中プロトタイプ</h2>
+                    <p>このページを閲覧するには専用のURLが必要です。</p>
+                </div>`;
+            throw new Error("Access Denied"); // 処理を強制停止
+        }
+
+        const request = indexedDB.open("KarutaDB", 1);
+        request.onupgradeneeded = e => {
+            e.target.result.createObjectStore("cards", { keyPath: "id", autoIncrement: true });
+        };
+        request.onsuccess = e => {
+            db = e.target.result;
+            loadAndRender(false);
+        };
+
+        // 録音ロジック
+        const recBtn = document.getElementById('recBtn');
+        recBtn.onclick = async () => {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                recBtn.textContent = "🎙 録音開始";
+                recBtn.classList.remove('recording');
+            } else {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        currentAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        document.getElementById('saveBtn').disabled = false;
+                        document.getElementById('status').textContent = "録音完了！";
+                    };
+                    mediaRecorder.start();
+                    recBtn.textContent = "⏹ 停止";
+                    recBtn.classList.add('recording');
+                } catch (err) {
+                    alert("マイク許可が必要です");
+                }
+            }
+        };
+
+        // 保存
+        document.getElementById('saveBtn').onclick = () => {
+            const imgFile = document.getElementById('imageInput').files[0];
+            if (!imgFile || !currentAudioBlob) return;
+            const transaction = db.transaction(["cards"], "readwrite");
+            transaction.objectStore("cards").add({ image: imgFile, audio: currentAudioBlob });
+            transaction.oncomplete = () => location.reload();
+        };
+
+        // ロードと描画
+        function loadAndRender(shouldShuffle = true) {
+            const store = db.transaction("cards").objectStore("cards");
+            store.getAll().onsuccess = e => {
+                allCards = e.target.result;
+                if (shouldShuffle) shuffle(allCards);
+                render();
+            };
+        }
+
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        function render() {
+            const board = document.getElementById('gameBoard');
+            board.innerHTML = "";
+            let count = 0;
+
+            allCards.forEach(card => {
+                const isRemoved = removedCardIds.has(card.id);
+                if (!isRemoved) count++;
+
+                const div = document.createElement('div');
+                div.className = `card ${isRemoved ? 'removed' : ''}`;
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(card.image);
+                div.onclick = () => checkAnswer(card.id);
+                div.appendChild(img);
+                board.appendChild(div);
+            });
+            document.getElementById('remainCount').textContent = count;
+        }
+
+        // ゲーム進行
+        document.getElementById('playBtn').onclick = () => {
+            // 残っているカードから選ぶ
+            const activeCards = allCards.filter(c => !removedCardIds.has(c.id));
+            
+            if (activeCards.length === 0) {
+                if (allCards.length === 0) return alert("カードを作ってね");
+                if (confirm("全部取りました！リセットしてもう一回遊ぶ？")) {
+                    removedCardIds.clear();
+                    loadAndRender(true);
+                }
+                return;
+            }
+
+            const target = activeCards[Math.floor(Math.random() * activeCards.length)];
+            correctId = target.id;
+            new Audio(URL.createObjectURL(target.audio)).play();
+            document.getElementById('gameMsg').textContent = "さがせ〜！";
+        };
+
+        function checkAnswer(id) {
+            if (correctId === null) return;
+            if (id === correctId) {
+                alert("正解！");
+                removedCardIds.add(id);
+                correctId = null;
+                document.getElementById('gameMsg').textContent = "正解！次の札へ！";
+                render();
+            } else {
+                alert("ちがうよー！");
+            }
+        }
+
+        document.getElementById('clearBtn').onclick = () => {
+            if (confirm("全削除しますか？")) {
+                indexedDB.deleteDatabase("KarutaDB");
+                location.reload();
+            }
+        };
+    </script>
+</body>
+</html>
