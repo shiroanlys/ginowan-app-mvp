@@ -232,6 +232,7 @@
         function checkAnswer(id) {
             if (correctId === null) return;
             if (id === correctId) {
+                alert("正解！");
                 removedCardIds.add(id);
                 correctId = null;
                 render(); 
@@ -249,3 +250,4 @@
     </script>
 </body>
 </html>
+
