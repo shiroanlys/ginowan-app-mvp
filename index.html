@@ -27,11 +27,19 @@
             overflow: hidden; 
             cursor: pointer; 
             transition: transform 0.2s;
+            -webkit-tap-highlight-color: transparent;
+
         }
         .card:hover { transform: scale(1.02); }
         .card img { width: 100%; height: 100%; object-fit: cover; }
 
         .btn { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; font-size: 1rem; transition: background-color 0.3s; }
+        /* ボタンとカードの沈み込みエフェクト */
+        .card:active, .btn:active {
+            transform: scale(0.95) !important;
+        }
+
+        .btn { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; font-size: 1rem; transition: background-color 0.3s, transform 0.1s; }
         .btn:disabled { background: #ccc !important; }
         .btn-blue { background: var(--primary); }
         .btn-red { background: var(--danger); }
