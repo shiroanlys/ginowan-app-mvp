@@ -167,13 +167,19 @@
         }
 
         function render() {
+            // 毎回最新の要素を取得する
+            const currentPlayBtn = document.getElementById('playBtn');
             const board = document.getElementById('gameBoard');
             const remainSpan = document.getElementById('remainCount');
             const gameMsg = document.getElementById('gameMsg');
-            
+
+            // 要素が見つからない場合のエラー回避
+            if (!currentPlayBtn || !board) return;
+
             board.innerHTML = "";
             let activeCount = 0;
 
+            // 1. カードの描画
             allCards.forEach(card => {
                 const isRemoved = removedCardIds.has(card.id);
                 if (!isRemoved) {
@@ -188,19 +194,21 @@
                 }
             });
 
-            remainSpan.textContent = activeCount;
+            // 2. 残り枚数の更新
+            if (remainSpan) remainSpan.textContent = activeCount;
 
-            // 「ボタン切り替え」ロジック
+            // 3. ボタン切り替えロジック (判定をより厳密に)
+            // allCards.length > 0 がないと、初期状態(0枚)でコンプリート表示になってしまうのを防ぐ
             if (allCards.length > 0 && activeCount === 0) {
                 isGameOver = true;
-                playBtn.textContent = "✨ コンプリート！もう一回あそぶ ✨";
-                playBtn.style.backgroundColor = "var(--primary)";
-                gameMsg.style.visibility = "hidden";
+                currentPlayBtn.textContent = "✨ コンプリート！もう一回あそぶ ✨";
+                currentPlayBtn.style.setProperty("background-color", "var(--primary)", "important");
+                if (gameMsg) gameMsg.style.visibility = "hidden";
             } else {
                 isGameOver = false;
-                playBtn.textContent = "🔊 読み札を再生";
-                playBtn.style.backgroundColor = "var(--success)";
-                gameMsg.style.visibility = "visible";
+                currentPlayBtn.textContent = "🔊 読み札を再生";
+                currentPlayBtn.style.setProperty("background-color", "var(--success)", "important");
+                if (gameMsg) gameMsg.style.visibility = "visible";
             }
         }
 
@@ -250,4 +258,3 @@
     </script>
 </body>
 </html>
-
